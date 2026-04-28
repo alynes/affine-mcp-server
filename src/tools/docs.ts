@@ -792,6 +792,20 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
     return null;
   }
 
+  function pruneFromFrameChildElementIds(blocks: Y.Map<any>, deletedIds: string[]): void {
+    if (deletedIds.length === 0) return;
+    const idSet = new Set(deletedIds);
+    for (const [, value] of blocks) {
+      if (!(value instanceof Y.Map)) continue;
+      if (value.get("sys:flavour") !== "affine:frame") continue;
+      const owned = value.get("prop:childElementIds");
+      if (!(owned instanceof Y.Map)) continue;
+      for (const id of idSet) {
+        if (owned.has(id)) owned.delete(id);
+      }
+    }
+  }
+
   function ensureNoteBlock(blocks: Y.Map<any>): string {
     const existingNoteId = findBlockIdByFlavour(blocks, "affine:note");
     if (existingNoteId) {
@@ -8226,22 +8240,41 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
         }
       }
 
-      const scalarFields: Array<keyof SurfaceElementFields> = [
-        "shapeType",
-        "radius",
-        "filled",
-        "fillColor",
-        "strokeColor",
-        "strokeWidth",
-        "strokeStyle",
-        "color",
-        "fontSize",
-        "fontWeight",
+      const shapeOnlyFields: Array<keyof SurfaceElementFields> = [
+        "shapeType", "radius", "filled", "fillColor",
       ];
-      for (const k of scalarFields) {
+      const strokeFields: Array<keyof SurfaceElementFields> = [
+        "strokeColor", "strokeWidth", "strokeStyle",
+      ];
+      const textStyleFields: Array<keyof SurfaceElementFields> = [
+        "color", "fontSize", "fontWeight",
+      ];
+      for (const k of shapeOnlyFields) {
         if (params[k] === undefined) continue;
-        el.set(k as string, params[k]);
-        changed.push(k as string);
+        if (elementType === "shape") {
+          el.set(k as string, params[k]);
+          changed.push(k as string);
+        } else {
+          ignored.push(k as string);
+        }
+      }
+      for (const k of strokeFields) {
+        if (params[k] === undefined) continue;
+        if (elementType === "shape" || elementType === "connector") {
+          el.set(k as string, params[k]);
+          changed.push(k as string);
+        } else {
+          ignored.push(k as string);
+        }
+      }
+      for (const k of textStyleFields) {
+        if (params[k] === undefined) continue;
+        if (elementType === "shape" || elementType === "connector" || elementType === "text") {
+          el.set(k as string, params[k]);
+          changed.push(k as string);
+        } else {
+          ignored.push(k as string);
+        }
       }
 
       if (params.index !== undefined) {
@@ -8398,6 +8431,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           prunedConnectors.push(id);
         }
       }
+
+      pruneFromFrameChildElementIds(blocks, [params.elementId]);
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
       await pushDocUpdate(
@@ -8679,6 +8714,8 @@ export function registerDocTools(server: McpServer, gql: GraphQLClient, defaults
           }
         }
       }
+
+      pruneFromFrameChildElementIds(blocks, deletedIds);
 
       const delta = Y.encodeStateAsUpdate(doc, prevSV);
       await pushDocUpdate(
